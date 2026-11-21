@@ -11,6 +11,19 @@
 
   const SUBJ = (window.TRAPEZA_DATA || []).map((s, i) => Object.assign({ idx: i }, s));
   const $app = document.getElementById('app');
+  const BRAND = window.BRAND || {};
+  const COLORS = Object.assign({ primary: '#163A5F', accent: '#C84B20', silver: '#B8BDC2', text: '#2B303A' }, BRAND.colors || {});
+  const SOURCE_NOTE = BRAND.sourceNote || 'Τα θέματα προέρχονται από την Τράπεζα Θεμάτων Διαβαθμισμένης Δυσκολίας του Ι.Ε.Π. (iep.edu.gr)';
+
+  // ---------- brand ----------
+  (function applyBrand() {
+    const logo = document.getElementById('brandLogo');
+    if (BRAND.logoHeader) { logo.src = BRAND.logoHeader; logo.alt = BRAND.name || ''; } else logo.remove();
+    if (BRAND.appTitle) document.getElementById('appTitle').textContent = BRAND.appTitle;
+    if (BRAND.appSubtitle) document.getElementById('appSub').textContent = BRAND.appSubtitle;
+    document.getElementById('brandLine').textContent = [BRAND.name, BRAND.tagline].filter(Boolean).join(' · ') + (BRAND.contact ? ' · ' + BRAND.contact : '');
+    document.title = [BRAND.appTitle || 'Τράπεζα Θεμάτων', BRAND.name].filter(Boolean).join(' · ');
+  })();
 
   // ---------- storage (best effort) ----------
   const store = {
@@ -102,6 +115,8 @@
   }
   window.addEventListener('popstate', e => {
     const s = e.state || { view: 'home' };
+    if (V.open && !s.viewer) { hideViewer(); if (s.view === state.view) return; }
+    if (s.viewer && !V.open) { history.back(); return; }
     state.view = s.view; if (s.sIdx != null) state.sIdx = s.sIdx;
     render();
   });
@@ -130,19 +145,29 @@
       ${opts && opts.where ? `<div class="where">${esc(subjLabel(s))}</div>` : ''}
       <div class="meta">${matNames.length ? matNames.map(esc).join(' • ') : 'Χωρίς ένδειξη ενότητας'}</div>
       <div class="actions">
-        <a class="btn" href="${FILE(id, 1)}" target="_blank" rel="noopener">📄 Εκφώνηση</a>
-        <a class="btn sol" href="${FILE(id, 2)}" target="_blank" rel="noopener">💡 Λύση</a>
+        <button class="btn" data-act="view" data-t="1">📄 Εκφώνηση</button>
+        <button class="btn sol" data-act="view" data-t="2">💡 Λύση</button>
         <button class="btn wide ${added ? 'added' : 'alt'}" data-act="cart">${added ? '✓ Στη λίστα εκτύπωσης' : '＋ Προσθήκη στην εκτύπωση'}</button>
       </div>
     </div>`;
   }
+  function cartEntry(s, it) { return { id: it[0], q: it[1], label: subjLabel(s), mats: it[2].map(m => s.mats[m]).filter(Boolean) }; }
+  function toggleCart(entry) {
+    if (inCart(entry.id)) { state.cart = state.cart.filter(c => c.id !== entry.id); toast('Αφαιρέθηκε από τη λίστα'); }
+    else { state.cart.push(entry); toast('Προστέθηκε στη λίστα εκτύπωσης'); }
+    saveCart();
+  }
   function bindItems(root) {
+    root.querySelectorAll('[data-act="view"]').forEach(b => b.onclick = () => {
+      const card = b.closest('.item'); const id = +card.dataset.id; const s = SUBJ[+card.dataset.s];
+      const it = s && s.items.find(x => x[0] === id);
+      const entry = it ? cartEntry(s, it) : (state.cart.find(c => c.id === id) || { id, q: '', label: '', mats: [] });
+      openViewer(id, +b.dataset.t, entry);
+    });
     root.querySelectorAll('[data-act="cart"]').forEach(b => b.onclick = () => {
       const card = b.closest('.item'); const id = +card.dataset.id; const s = SUBJ[+card.dataset.s];
       const it = s.items.find(x => x[0] === id);
-      if (inCart(id)) { state.cart = state.cart.filter(c => c.id !== id); toast('Αφαιρέθηκε από τη λίστα'); }
-      else { state.cart.push({ id, q: it[1], label: subjLabel(s), mats: it[2].map(m => s.mats[m]).filter(Boolean) }); toast('Προστέθηκε στη λίστα εκτύπωσης'); }
-      saveCart();
+      toggleCart(cartEntry(s, it));
       const added = inCart(id);
       b.className = `btn wide ${added ? 'added' : 'alt'}`;
       b.textContent = added ? '✓ Στη λίστα εκτύπωσης' : '＋ Προσθήκη στην εκτύπωση';
@@ -153,6 +178,7 @@
   function viewHome() {
     const subs = SUBJ.filter(s => s.school === state.school && s.cls === state.cls);
     return `
+    <div class="hero"><b>${esc(BRAND.appTitle || 'Τράπεζα Θεμάτων')}</b>${esc(BRAND.appSubtitle || 'Μαθηματικά Λυκείου · ΓΕΛ & ΕΠΑΛ')}</div>
     <div class="card">
       <h2>🔎 Αναζήτηση με κωδικό</h2>
       <form class="code-search" id="codeForm">
@@ -237,7 +263,7 @@
     };
     document.getElementById('addAll').onclick = () => {
       let n = 0;
-      filtered(s).forEach(it => { if (!inCart(it[0])) { state.cart.push({ id: it[0], q: it[1], label: subjLabel(s), mats: it[2].map(m => s.mats[m]).filter(Boolean) }); n++; } });
+      filtered(s).forEach(it => { if (!inCart(it[0])) { state.cart.push(cartEntry(s, it)); n++; } });
       saveCart(); renderKeepScroll(); toast(n ? `Προστέθηκαν ${n} θέματα στη λίστα` : 'Είναι ήδη όλα στη λίστα');
     };
     bindItems($app);
@@ -250,8 +276,8 @@
     return `<div class="card"><h2>Αποτελέσματα για «${esc(state.codeQuery)}»</h2>
       <form class="code-search" id="codeForm"><input id="codeInput" inputmode="numeric" value="${esc(state.codeQuery)}" aria-label="Κωδικός θέματος"><button class="btn" type="submit">Βρες</button></form></div>
       ${hits.length ? hits.map(([s, it]) => itemCard(s, it, { where: true })).join('') :
-        `<div class="item"><div class="empty" style="padding:10px">Ο κωδικός δεν βρέθηκε στα Μαθηματικά.<br>Μπορείτε να δοκιμάσετε απευθείας τα αρχεία του ΙΕΠ:</div>
-         <div class="actions"><a class="btn" href="${FILE(id, 1)}" target="_blank" rel="noopener">📄 Εκφώνηση</a><a class="btn sol" href="${FILE(id, 2)}" target="_blank" rel="noopener">💡 Λύση</a></div></div>`}`;
+        `<div class="item" data-id="${id}" data-s="-1"><div class="empty" style="padding:10px">Ο κωδικός δεν βρέθηκε στα Μαθηματικά.<br>Μπορείτε να δοκιμάσετε απευθείας τα αρχεία του ΙΕΠ:</div>
+         <div class="actions"><button class="btn" data-act="view" data-t="1">📄 Εκφώνηση</button><button class="btn sol" data-act="view" data-t="2">💡 Λύση</button></div></div>`}`;
   }
   function bindCode() {
     document.getElementById('codeForm').onsubmit = e => {
@@ -275,13 +301,13 @@
       <div id="pdfBox" class="hidden"><div class="progress"><i id="bar"></i></div><div class="note" id="pdfMsg"></div><div class="row" id="pdfLinks" style="margin-top:8px"></div></div>
       ` : '<div class="empty">Η λίστα είναι άδεια.<br>Πατήστε «Προσθήκη στην εκτύπωση» σε όποια θέματα θέλετε.</div>'}
     </div>
-    ${c.map((x, i) => `<div class="item" data-i="${i}">
+    ${c.map((x, i) => `<div class="item" data-i="${i}" data-id="${x.id}" data-s="-1">
       <div class="top"><span class="code">${i + 1}. Κωδ. ${x.id}</span><span class="badge q${x.q}">Θέμα ${x.q}ο</span></div>
       <div class="where">${esc(x.label)}</div>
       <div class="meta">${(x.mats || []).map(esc).join(' • ')}</div>
       <div class="actions">
-        <a class="btn" href="${FILE(x.id, 1)}" target="_blank" rel="noopener">📄 Εκφώνηση</a>
-        <a class="btn sol" href="${FILE(x.id, 2)}" target="_blank" rel="noopener">💡 Λύση</a>
+        <button class="btn" data-act="view" data-t="1">📄 Εκφώνηση</button>
+        <button class="btn sol" data-act="view" data-t="2">💡 Λύση</button>
         <div class="row wide"><button class="btn alt" data-up style="flex:1">↑</button><button class="btn alt" data-down style="flex:1">↓</button><button class="btn alt" data-del style="flex:2">✕ Αφαίρεση</button></div>
       </div></div>`).join('')}`;
   }
@@ -289,6 +315,7 @@
     const ws = document.getElementById('withSol'); if (ws) ws.onchange = () => { state.withSol = ws.checked; store.set('tt_withsol', ws.checked); };
     const cl = document.getElementById('clearCart'); if (cl) cl.onclick = () => { if (confirmClear()) { state.cart = []; saveCart(); render(); } };
     const mk = document.getElementById('makePdf'); if (mk) mk.onclick = makePdf;
+    bindItems($app);
     $app.querySelectorAll('.item[data-i]').forEach(card => {
       const i = +card.dataset.i;
       card.querySelector('[data-del]').onclick = () => { state.cart.splice(i, 1); saveCart(); renderKeepScroll(); };
@@ -302,51 +329,202 @@
     clearArmed = Date.now(); toast('Πατήστε ξανά για άδειασμα της λίστας'); return false;
   }
 
-  // ---------- merged PDF ----------
-  function loadPdfLib() {
-    if (window.PDFLib) return Promise.resolve(window.PDFLib);
-    return new Promise((res, rej) => {
-      const sc = document.createElement('script');
-      sc.src = 'https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js';
-      sc.onload = () => res(window.PDFLib); sc.onerror = rej; document.head.appendChild(sc);
+  // ---------- script loader ----------
+  const loaded = {};
+  function loadScript(src) {
+    if (!loaded[src]) loaded[src] = new Promise((res, rej) => {
+      const sc = document.createElement('script'); sc.src = src; sc.onload = res;
+      sc.onerror = () => { delete loaded[src]; rej(new Error('load ' + src)); }; document.head.appendChild(sc);
     });
+    return loaded[src];
   }
+  const PDFJS = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js';
+  const PDFJS_WORKER = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+  const PDFLIB = 'https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js';
+  const FONTKIT = 'https://cdn.jsdelivr.net/npm/@pdf-lib/fontkit@1.1.1/dist/fontkit.umd.min.js';
+
+  // small in-memory cache of downloaded PDFs
+  const fileCache = new Map();
+  async function getFile(id, t) {
+    const k = id + '-' + t;
+    if (fileCache.has(k)) return fileCache.get(k);
+    const r = await fetch(FILE(id, t)); if (!r.ok) throw new Error('http ' + r.status);
+    const buf = await r.arrayBuffer();
+    fileCache.set(k, buf); if (fileCache.size > 12) fileCache.delete(fileCache.keys().next().value);
+    return buf;
+  }
+
+  // ---------- in-app PDF viewer ----------
+  const V = { open: false, id: 0, t: 1, entry: null, zoom: 1, doc: null, token: 0 };
+  const $v = document.getElementById('viewer'), $vb = document.getElementById('vBody');
+  function viewerChrome() {
+    const e = V.entry || {};
+    document.getElementById('vTitle').innerHTML = `Κωδ. ${V.id} · ${V.t === 1 ? 'Εκφώνηση' : 'Ενδεικτική απάντηση'}<small>${esc(e.label || '')}${e.q ? ' · Θέμα ' + e.q + 'ο' : ''}</small>`;
+    document.getElementById('vSwap').textContent = V.t === 1 ? '💡 Δείξε τη λύση' : '📄 Δείξε την εκφώνηση';
+    const added = inCart(V.id);
+    const vc = document.getElementById('vCart');
+    vc.textContent = added ? '✓ Στην εκτύπωση' : '＋ Εκτύπωση';
+    vc.className = 'btn ' + (added ? 'added' : 'alt');
+  }
+  function openViewer(id, t, entry) {
+    Object.assign(V, { open: true, id, t, entry, zoom: 1 });
+    $v.classList.remove('hidden'); document.body.style.overflow = 'hidden';
+    history.pushState({ view: state.view, sIdx: state.sIdx, viewer: true }, '');
+    viewerChrome(); loadDoc();
+  }
+  function hideViewer() {
+    V.open = false; V.token++; $v.classList.add('hidden'); document.body.style.overflow = ''; $vb.innerHTML = '';
+    if (V.doc) { try { V.doc.destroy(); } catch (e) { } V.doc = null; }
+    renderKeepScroll();
+  }
+  async function loadDoc() {
+    const my = ++V.token;
+    $vb.innerHTML = '<div class="vmsg">Φόρτωση…</div>';
+    try {
+      await loadScript(PDFJS);
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER;
+      const buf = await getFile(V.id, V.t);
+      if (my !== V.token) return;
+      if (V.doc) { try { V.doc.destroy(); } catch (e) { } }
+      V.doc = await window.pdfjsLib.getDocument({ data: buf.slice(0) }).promise;
+      if (my !== V.token) return;
+      await drawPages(my);
+    } catch (e) {
+      if (my !== V.token) return;
+      $vb.innerHTML = `<div class="vmsg">Δεν ήταν δυνατή η εμφάνιση του αρχείου.<br>Ελέγξτε τη σύνδεση στο internet.<br><br>
+        <a href="${FILE(V.id, V.t)}" target="_blank" rel="noopener">Άνοιγμα του αρχείου εκτός εφαρμογής</a></div>`;
+    }
+  }
+  async function drawPages(my) {
+    const doc = V.doc; if (!doc) return;
+    const avail = Math.min($vb.clientWidth - 16, 900);
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    const frag = document.createDocumentFragment(); const canvases = [];
+    for (let i = 1; i <= doc.numPages; i++) { const c = document.createElement('canvas'); frag.appendChild(c); canvases.push(c); }
+    $vb.innerHTML = ''; $vb.appendChild(frag);
+    for (let i = 1; i <= doc.numPages; i++) {
+      if (my !== V.token) return;
+      const page = await doc.getPage(i);
+      const base = page.getViewport({ scale: 1 });
+      const scale = avail / base.width * V.zoom;
+      const vp = page.getViewport({ scale: scale * dpr });
+      const c = canvases[i - 1];
+      c.width = Math.floor(vp.width); c.height = Math.floor(vp.height);
+      c.style.width = Math.floor(vp.width / dpr) + 'px'; c.style.height = Math.floor(vp.height / dpr) + 'px';
+      await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+    }
+  }
+  function setZoom(z) {
+    const old = V.zoom; V.zoom = Math.max(1, Math.min(3, z)); if (V.zoom === old || !V.doc) return;
+    const ry = $vb.scrollTop / Math.max(1, $vb.scrollHeight), rx = $vb.scrollLeft / Math.max(1, $vb.scrollWidth);
+    const my = ++V.token;
+    drawPages(my).then(() => { $vb.scrollTop = ry * $vb.scrollHeight; $vb.scrollLeft = rx * $vb.scrollWidth; });
+  }
+  document.getElementById('vClose').onclick = () => history.back();
+  document.getElementById('vIn').onclick = () => setZoom(V.zoom + 0.5);
+  document.getElementById('vOut').onclick = () => setZoom(V.zoom - 0.5);
+  document.getElementById('vSwap').onclick = () => { V.t = V.t === 1 ? 2 : 1; V.zoom = 1; viewerChrome(); loadDoc(); };
+  document.getElementById('vCart').onclick = () => {
+    const e = V.entry && V.entry.label ? V.entry : (state.cart.find(c => c.id === V.id) || { id: V.id, q: '', label: '', mats: [] });
+    toggleCart(e); viewerChrome();
+  };
+  let rsT; window.addEventListener('resize', () => { if (!V.open) return; clearTimeout(rsT); rsT = setTimeout(() => drawPages(++V.token), 250); });
+
+  // ---------- merged, branded PDF ----------
+  const hex = (h) => { const n = parseInt(String(h).replace('#', ''), 16); return window.PDFLib.rgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255); };
+  async function fetchBytes(url) { const r = await fetch(url); if (!r.ok) throw new Error(url); return r.arrayBuffer(); }
+  function fitText(font, text, size, maxW) { while (size > 5 && font.widthOfTextAtSize(text, size) > maxW) size -= 0.25; return size; }
+
   let lastUrl = null;
   async function makePdf() {
     const btn = document.getElementById('makePdf'); const box = document.getElementById('pdfBox');
     const bar = document.getElementById('bar'); const msg = document.getElementById('pdfMsg'); const links = document.getElementById('pdfLinks');
-    btn.disabled = true; box.classList.remove('hidden'); links.innerHTML = '';
-    const jobs = state.cart.map(c => [c.id, 1]);
-    if (state.withSol) state.cart.forEach(c => jobs.push([c.id, 2]));
+    btn.disabled = true; box.classList.remove('hidden'); links.innerHTML = ''; bar.style.width = '0';
+    const jobs = state.cart.map(c => [c, 1]);
+    if (state.withSol) state.cart.forEach(c => jobs.push([c, 2]));
     const failed = [];
     try {
       msg.textContent = 'Προετοιμασία…';
-      const { PDFDocument } = await loadPdfLib();
+      await loadScript(PDFLIB); await loadScript(FONTKIT);
+      const { PDFDocument } = window.PDFLib;
       const out = await PDFDocument.create();
+      out.registerFontkit(window.fontkit);
+      const [fReg, fBold, logoBytes] = await Promise.all([
+        fetchBytes('font.ttf'), fetchBytes('font-bold.ttf'),
+        BRAND.logoPdf ? fetchBytes(BRAND.logoPdf).catch(() => null) : Promise.resolve(null)
+      ]);
+      const font = await out.embedFont(fReg, { subset: true });
+      const bold = await out.embedFont(fBold, { subset: true });
+      const logo = logoBytes ? await out.embedPng(logoBytes).catch(() => null) : null;
+
+      // 1) collect pages
+      const pages = []; // {emb, w, h, label}
       for (let k = 0; k < jobs.length; k++) {
-        const [id, t] = jobs[k];
-        msg.textContent = `Λήψη ${k + 1} από ${jobs.length} (θέμα ${id}${t === 2 ? ', λύση' : ''})…`;
+        const [c, t] = jobs[k];
+        msg.textContent = `Λήψη ${k + 1} από ${jobs.length} (κωδ. ${c.id}${t === 2 ? ', λύση' : ''})…`;
         try {
-          const r = await fetch(FILE(id, t)); if (!r.ok) throw 0;
-          const src = await PDFDocument.load(await r.arrayBuffer(), { ignoreEncryption: true });
-          const pages = await out.copyPages(src, src.getPageIndices());
-          pages.forEach(p => out.addPage(p));
-        } catch (e) { failed.push(id + (t === 2 ? ' (λύση)' : '')); }
-        bar.style.width = Math.round((k + 1) / jobs.length * 100) + '%';
+          const bytes = await getFile(c.id, t);
+          const src = await PDFDocument.load(bytes.slice(0), { ignoreEncryption: true });
+          const idx = src.getPageIndices();
+          const embs = await out.embedPdf(src, idx);
+          idx.forEach((pi, j) => {
+            const sz = src.getPage(pi).getSize();
+            pages.push({ emb: embs[j], w: sz.width, h: sz.height, label: `Κωδ. ${c.id} · ${t === 1 ? 'Εκφώνηση' : 'Ενδεικτική απάντηση'}${c.q ? ' · Θέμα ' + c.q + 'ο' : ''}` });
+          });
+        } catch (e) { failed.push(c.id + (t === 2 ? ' (λύση)' : '')); }
+        bar.style.width = Math.round((k + 1) / jobs.length * 90) + '%';
       }
-      if (!out.getPageCount()) throw new Error('empty');
+      if (!pages.length) throw new Error('empty');
+
+      // 2) draw with header/footer
+      msg.textContent = 'Σελιδοποίηση…';
+      const N = pages.length, M = 28;
+      const cPri = hex(COLORS.primary), cAcc = hex(COLORS.accent), cSil = hex(COLORS.silver), cTxt = hex(COLORS.text);
+      pages.forEach((pg, i) => {
+        const { w, h } = pg; const HB = 50, FB = 34;
+        const p = out.addPage([w, h]);
+        const s = Math.min(1, (h - HB - FB) / h);
+        const dw = w * s, dh = h * s;
+        p.drawPage(pg.emb, { x: (w - dw) / 2, y: FB + ((h - HB - FB) - dh) / 2, width: dw, height: dh });
+        // header
+        const top = h - 12;
+        let lx = M;
+        if (logo) {
+          const lh = 28, lw = logo.width * lh / logo.height;
+          p.drawImage(logo, { x: M, y: top - lh, width: lw, height: lh }); lx = M + lw + 10;
+        } else if (BRAND.name) {
+          p.drawText(BRAND.name, { x: M, y: top - 20, size: 14, font: bold, color: cPri }); lx = M + bold.widthOfTextAtSize(BRAND.name, 14) + 10;
+        }
+        const maxR = w - M - lx;
+        const ls = fitText(bold, pg.label, 9, maxR);
+        p.drawText(pg.label, { x: w - M - bold.widthOfTextAtSize(pg.label, ls), y: top - 12, size: ls, font: bold, color: cPri });
+        if (BRAND.contact) {
+          const cs = fitText(font, BRAND.contact, 7.5, maxR);
+          p.drawText(BRAND.contact, { x: w - M - font.widthOfTextAtSize(BRAND.contact, cs), y: top - 24, size: cs, font, color: cTxt });
+        }
+        p.drawLine({ start: { x: M, y: h - HB + 6 }, end: { x: w - M, y: h - HB + 6 }, thickness: 1.2, color: cAcc });
+        // footer
+        p.drawLine({ start: { x: M, y: FB - 6 }, end: { x: w - M, y: FB - 6 }, thickness: 0.6, color: cSil });
+        const pn = `Σελίδα ${i + 1} από ${N}`;
+        const pnw = font.widthOfTextAtSize(pn, 8);
+        p.drawText(pn, { x: w - M - pnw, y: FB - 18, size: 8, font, color: cTxt });
+        const ns = fitText(font, SOURCE_NOTE, 7, w - 2 * M - pnw - 14);
+        p.drawText(SOURCE_NOTE, { x: M, y: FB - 18, size: ns, font, color: cTxt });
+      });
+
       const bytes = await out.save();
+      bar.style.width = '100%';
       if (lastUrl) URL.revokeObjectURL(lastUrl);
       lastUrl = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
       const name = `themata-${new Date().toISOString().slice(0, 10)}.pdf`;
-      msg.textContent = `Έτοιμο: ${out.getPageCount()} σελίδες.` + (failed.length ? ` Δεν κατέβηκαν: ${failed.join(', ')}.` : '');
-      links.innerHTML = `<a class="btn" href="${lastUrl}" target="_blank" rel="noopener">👁️ Άνοιγμα</a><a class="btn alt" href="${lastUrl}" download="${name}">⬇️ Λήψη</a>`;
+      msg.textContent = `Έτοιμο: ${N} σελίδες.` + (failed.length ? ` Δεν κατέβηκαν: ${failed.join(', ')}.` : '');
+      links.innerHTML = `<a class="btn" href="${lastUrl}" target="_blank" rel="noopener">👁️ Άνοιγμα</a><a class="btn orange" href="${lastUrl}" download="${name}">⬇️ Λήψη / Εκτύπωση</a>`;
     } catch (e) {
       msg.textContent = 'Δεν ήταν δυνατή η δημιουργία του PDF. Ελέγξτε τη σύνδεση στο internet και δοκιμάστε ξανά.';
+      console.error(e);
     }
     btn.disabled = false;
   }
-
   // ---------- install ----------
   let deferredPrompt = null;
   window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredPrompt = e; setupInstall(); });

@@ -1,6 +1,6 @@
 // Service worker: κρατά τα αρχεία της εφαρμογής, φέρνει πάντα τη νεότερη έκδοση όταν υπάρχει internet.
-const CACHE = 'trapeza-v2';
-const SHELL = ['./', 'index.html', 'app.js', 'data.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
+const CACHE = 'trapeza-v3';
+const SHELL = ['./', 'index.html', 'config.js', 'app.js', 'data.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'logo-header-sm.png', 'logo-header.png', 'font.ttf', 'font-bold.ttf'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()));
