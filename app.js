@@ -13,7 +13,7 @@
   const $app = document.getElementById('app');
   const BRAND = window.BRAND || {};
   const COLORS = Object.assign({ primary: '#163A5F', accent: '#C84B20', silver: '#B8BDC2', text: '#2B303A' }, BRAND.colors || {});
-  const SOURCE_NOTE = BRAND.sourceNote || 'Τα θέματα προέρχονται από την Τράπεζα Θεμάτων Διαβαθμισμένης Δυσκολίας του Ι.Ε.Π. (iep.edu.gr)';
+  const SOURCE_NOTE = BRAND.sourceNote || '«Το/τα θέμα/τα προέρχεται και αντλήθηκε/αν από την πλατφόρμα της Τράπεζας Θεμάτων Διαβαθμισμένης Δυσκολίας που αναπτύχθηκε (MIS5070818-Τράπεζα θεμάτων Διαβαθμισμένης Δυσκολίας για τη Δευτεροβάθμια Εκπαίδευση, Γενικό Λύκειο-ΕΠΑΛ) και είναι διαδικτυακά στο δικτυακό τόπο του Ινστιτούτου Εκπαιδευτικής Πολιτικής (Ι.Ε.Π.) στη διεύθυνση (http://iep.edu.gr/el/trapeza-thematon-arxiki-selida)».';
 
   // ---------- brand ----------
   (function applyBrand() {
@@ -23,6 +23,7 @@
     if (BRAND.appSubtitle) document.getElementById('appSub').textContent = BRAND.appSubtitle;
     document.getElementById('brandLine').textContent = [BRAND.name, BRAND.tagline].filter(Boolean).join(' · ') + (BRAND.contact ? ' · ' + BRAND.contact : '');
     document.title = [BRAND.appTitle || 'Τράπεζα Θεμάτων', BRAND.name].filter(Boolean).join(' · ');
+    document.getElementById('srcNote').textContent = SOURCE_NOTE;
   })();
 
   // ---------- storage (best effort) ----------
@@ -43,6 +44,7 @@
     q: 'all',
     shown: PAGE,
     random: null,
+    kw: { mode: 'exact', q: '' },
     codeQuery: '',
     cart: store.get('tt_cart', []),
     withSol: store.get('tt_withsol', false)
@@ -63,12 +65,20 @@
 
   function matKey(name) {
     let m = /Κεφάλαιο\s*(\d+)/.exec(name);
-    if (m) return [+m[1], 0];
-    m = /(\d+)\.(\d+)/.exec(name);
-    if (m) return [+m[1], +m[2]];
+    if (m) return [+m[1]];
+    m = /^\s*(?:Ενότητα|Παρ\.)?\s*(\d+(?:\.\d+)*)/.exec(name);
+    if (m) return m[1].split('.').filter(Boolean).map(Number);
     return null;
   }
+  function cmpKey(a, b) { for (let i = 0; i < Math.max(a.length, b.length); i++) { const x = a[i] === undefined ? -1 : a[i], y = b[i] === undefined ? -1 : b[i]; if (x !== y) return x - y; } return 0; }
 
+  const KW_GENERIC = /^(γελ|επαλ|γενικο λυκειο|[αβγ] λυκειου|[αβγ] ταξη|γεωμετρια|αλγεβρα|φυσικη|χημεια|βιολογια|μαθηματικα)( [αβγ] λυκειου)?$/;
+  function cleanKw(t) {
+    const nn = (x) => x.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/ς/g, 'σ').replace(/\s+/g, ' ').trim();
+    const out = [], seen = new Set();
+    String(t || '').split(/[,;]/).map(x => x.replace(/^[\s.;:]+|[\s.;:]+$/g, '')).forEach(x => { const k = nn(x); if (x && !KW_GENERIC.test(k) && !seen.has(k)) { seen.add(k); out.push(x); } });
+    return out.join(', ');
+  }
   // ---------- live refresh from the IEP API ----------
   let treeP = null;
   function getTree() {
@@ -92,9 +102,9 @@
       if (!le || !data || !Array.isArray(data.items) || !data.items.length) return;
       let mats = le.material.slice().sort((a, b) => a.vieworder - b.vieworder);
       const keys = mats.map(m => matKey(m.name));
-      if (keys.every(Boolean)) mats = mats.map((m, i) => [m, keys[i]]).sort((a, b) => a[1][0] - b[1][0] || a[1][1] - b[1][1]).map(x => x[0]);
+      if (keys.every(Boolean) && new Set(keys.map(k => k.join('.'))).size === keys.length) mats = mats.map((m, i) => [m, keys[i]]).sort((a, b) => cmpKey(a[1], b[1])).map(x => x[0]);
       const pos = new Map(mats.map((m, i) => [m.id, i]));
-      const items = data.items.map(it => [it.id, it.question, (it.material || []).map(m => pos.get(m.id)).filter(x => x !== undefined).sort((a, b) => a - b)]);
+      const items = data.items.map(it => [it.id, it.question, (it.material || []).map(m => pos.get(m.id)).filter(x => x !== undefined).sort((a, b) => a - b), cleanKw(it.keywords)]);
       const before = s.items.length;
       s.mats = mats.map(m => String(m.name).replace(/"+$/, '').trim());
       s.items = items;
@@ -123,6 +133,132 @@
   document.getElementById('backBtn').onclick = () => history.back();
   document.getElementById('cartBtn').onclick = () => { if (state.view !== 'cart') go('cart'); };
 
+  // ---------- keyword search (IEP keywords + chapter titles) ----------
+  const KW_MODES = { exact: 'Ακριβής', related: 'Συναφής', both: 'Συνδυαστική' };
+  const KW_HELP = {
+    exact: 'Θέματα των οποίων οι λέξεις-κλειδιά ή η ενότητα περιέχουν τη λέξη ή τη φράση όπως την πληκτρολογείτε.',
+    related: 'Θέματα που αφορούν την ίδια έννοια, ακόμα και με άλλες λέξεις.',
+    both: 'Και τα δύο, σε χωριστές ομάδες.'
+  };
+  const normCh = (c) => c.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/ς/g, 'σ');
+  const norm = (t) => normCh(String(t)).replace(/\s+/g, ' ').trim();
+  const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const ENDINGS = ['ουσ', 'ιων', 'ων', 'ου', 'οι', 'ασ', 'εσ', 'ησ', 'ια', 'ιο', 'οσ', 'ον', 'α', 'ε', 'η', 'ι', 'ο', 'υ', 'σ', 'ω'];
+  function stem(w) {
+    w = norm(w); if (w.length <= 4 || !/[α-ω]/.test(w)) return w;
+    for (const e of ENDINGS) if (w.endsWith(e) && w.length - e.length >= 4) return w.slice(0, -e.length);
+    return w;
+  }
+  const words = (t) => norm(t).split(/[^0-9a-zα-ω]+/).filter(w => w.length >= 2);
+  function termOf(t) { const ws = words(t).filter(w => w.length >= 3 || /\d/.test(w)); return ws.length ? ws.map(stem) : null; }
+  const termRe = (term) => term.map(st => new RegExp('(^|[^0-9a-zα-ω])' + reEsc(st)));
+  let CONCEPTS = null;
+  function concepts() {
+    if (!CONCEPTS) CONCEPTS = (window.TRAPEZA_CONCEPTS || []).map(g => g.map(label => ({ label, term: termOf(label) })).filter(x => x.term));
+    return CONCEPTS;
+  }
+  function relatedTerms(q) {
+    const qTerm = termOf(q); if (!qTerm) return [];
+    const qn = norm(q);
+    const out = [{ label: q, term: qTerm, w: 3 }];
+    const seen = new Set([qTerm.join(' ')]);
+    for (const g of concepts()) {
+      const hit = g.some(x => {
+        const tn = norm(x.label);
+        if (tn.includes(qn) || qn.includes(tn)) return true;
+        return x.term.every(st => qTerm.some(q2 => q2.startsWith(st) || st.startsWith(q2)));
+      });
+      if (!hit) continue;
+      for (const x of g) { const k = x.term.join(' '); if (!seen.has(k)) { seen.add(k); out.push({ label: x.label, term: x.term, w: 1 }); } }
+    }
+    return out;
+  }
+  // highlight ranges in an original string, given a test on its normalized form
+  function highlight(orig, findAll) {
+    let out = '', map = [];
+    for (let i = 0; i < orig.length; i++) { const n = normCh(orig[i]); for (const ch of n) { out += ch; map.push(i); } }
+    const ranges = findAll(out).map(([a, l]) => { while (a + l < out.length && /[0-9a-zα-ω]/.test(out[a + l])) l++; return [map[a], map[Math.min(a + l - 1, map.length - 1)] + 1]; })
+      .sort((x, y) => x[0] - y[0]);
+    let html = '', pos = 0;
+    for (const [a, b] of ranges) { if (a < pos) continue; html += esc(orig.slice(pos, a)) + '<mark>' + esc(orig.slice(a, b)) + '</mark>'; pos = b; }
+    return html + esc(orig.slice(pos));
+  }
+  const findStr = (qn) => (o) => { const r = []; let i = o.indexOf(qn); while (i >= 0) { r.push([i, qn.length]); i = o.indexOf(qn, i + 1); } return r; };
+  const findTerms = (terms) => (o) => { const r = []; for (const x of terms) for (const re of x.re) { const g = new RegExp(re.source, 'g'); let m; while ((m = g.exec(o))) { r.push([m.index + m[1].length, m[0].length - m[1].length]); if (!m[0].length) g.lastIndex++; } } return r; };
+
+  function runSearch(s, q, mode) {
+    const pool = filtered(s);
+    const qn = norm(q);
+    const res = { exact: [], related: [], withKw: s.items.filter(it => it[3]).length };
+    const matN = s.mats.map(m => norm(m));
+    const exactIds = new Set();
+    const view = (it, kwHtml, matHit) => ({ it, kwHtml, matHit });
+    if (mode !== 'related') {
+      for (const it of pool) {
+        const kn = norm(it[3] || '');
+        const inKw = kn.includes(qn), inMat = it[2].some(m => matN[m].includes(qn));
+        if (inKw || inMat) { exactIds.add(it[0]); res.exact.push(view(it, it[3] ? highlight(it[3], findStr(qn)) : '', inMat && !inKw)); }
+      }
+    }
+    if (mode !== 'exact') {
+      const terms = relatedTerms(q).map(x => Object.assign({ re: termRe(x.term) }, x));
+      for (const it of pool) {
+        if (exactIds.has(it[0])) continue;
+        const kn = norm(it[3] || '');
+        let score = 0; const why = []; const hitTerms = []; let byMat = false;
+        for (const x of terms) {
+          if (kn && x.re.every(r => r.test(kn))) { score += x.w * 2; hitTerms.push(x); if (x.w === 1 && why.length < 3) why.push(x.label); }
+          else if ((x.w > 1 || x.term.length > 1) && it[2].some(m => x.re.every(r => r.test(matN[m])))) { score += x.w; byMat = true; if (x.w === 1 && why.length < 3 && !why.includes(x.label)) why.push(x.label); }
+        }
+        if (!score) continue;
+        res.related.push(Object.assign(view(it, it[3] ? highlight(it[3], findTerms(hitTerms)) : '', byMat && !hitTerms.length), { score, why }));
+      }
+      res.related.sort((a, b) => b.score - a.score);
+    }
+    return res;
+  }
+
+  function kwCard(s) {
+    const k = state.kw; const m = k.mode || 'exact';
+    const withKw = s.items.filter(it => it[3]).length;
+    const cover = withKw === s.items.length ? '' : withKw === 0
+      ? ' Το Ι.Ε.Π. δεν έχει λέξεις-κλειδιά για αυτό το μάθημα, οπότε η αναζήτηση γίνεται στους τίτλους των ενοτήτων.'
+      : ` Λέξεις-κλειδιά έχουν ${withKw} από τα ${s.items.length} θέματα· για τα υπόλοιπα ψάχνει στους τίτλους των ενοτήτων.`;
+    return `<div class="card" id="kwCard">
+      <h2>🔎 Αναζήτηση με λέξη-κλειδί</h2>
+      <form class="code-search" id="kwForm"><input id="kwInput" placeholder="π.χ. ${esc(KW_EXAMPLE[s.subject] || 'τρίγωνο')}" value="${esc(k.q || '')}" aria-label="Λέξη ή φράση" enterkeyhint="search"></form>
+      <div class="kwmodes">${Object.entries(KW_MODES).map(([mm, l]) => `<button class="${m === mm ? 'on' : ''}" data-kw="${mm}">${l}</button>`).join('')}</div>
+      <div class="note">${KW_HELP[m]}${cover}</div>
+    </div>`;
+  }
+  const KW_EXAMPLE = { 'Γεωμετρία': 'ισοσκελές', 'Άλγεβρα': 'τριώνυμο', 'Χημεία': 'αραίωση', 'Βιολογία': 'αντισώματα', 'Φυσική': 'τριβή', 'Φυσική Προσανατολισμού': 'κρούση', 'Μαθηματικά': 'πιθανότητα', 'Μαθηματικά Προσανατολισμού': 'μονοτονία' };
+  function kwResults(s) {
+    const k = state.kw; if (!k.active || !k.res) return '';
+    const r = k.res; const lim = k.shown;
+    const group = (title, arr, cls, key) => `<div class="kwgroup ${cls}"><div class="kwtitle">${title} · <b>${arr.length}</b></div>
+      ${arr.slice(0, lim[key]).map(x => itemCard(s, x.it, x)).join('') || '<div class="empty" style="padding:14px">Κανένα θέμα.</div>'}
+      ${arr.length > lim[key] ? `<button class="btn alt" data-kwmore="${key}" style="width:100%;margin-bottom:12px">Εμφάνιση περισσότερων (${arr.length - lim[key]})</button>` : ''}</div>`;
+    return `<div class="sum"><span>Αναζήτηση: «<b>${esc(k.q)}</b>» · ${KW_MODES[k.mode]}</span><button class="btn alt" id="kwClear">✕ Καθαρισμός</button></div>
+      ${k.mode !== 'related' ? group('Ακριβή αποτελέσματα', r.exact, 'ex', 'exact') : ''}
+      ${k.mode !== 'exact' ? group('Συναφή αποτελέσματα', r.related, 'rel', 'related') : ''}`;
+  }
+  function doSearch(mode) {
+    const inp = document.getElementById('kwInput');
+    const q = (inp ? inp.value : state.kw.q || '').trim();
+    state.kw.mode = mode || state.kw.mode || 'exact';
+    if (q.length < 2) { toast('Γράψτε τουλάχιστον 2 γράμματα'); renderKeepScroll(); return; }
+    Object.assign(state.kw, { q, active: true, shown: { exact: PAGE, related: PAGE } });
+    renderKeepScroll();
+    const t = document.getElementById('kwRes'); if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  function bindKw() {
+    const f = document.getElementById('kwForm'); if (!f) return;
+    f.onsubmit = e => { e.preventDefault(); doSearch(); };
+    document.querySelectorAll('[data-kw]').forEach(b => b.onclick = () => doSearch(b.dataset.kw));
+    const c = document.getElementById('kwClear'); if (c) c.onclick = () => { state.kw = { mode: state.kw.mode, q: state.kw.q }; renderKeepScroll(); };
+    document.querySelectorAll('[data-kwmore]').forEach(b => b.onclick = () => { state.kw.shown[b.dataset.kwmore] += PAGE; renderKeepScroll(); });
+  }
+
   // ---------- filtering ----------
   function filtered(s) {
     const sel = state.sel; const max = sel.size ? Math.max(...sel) : -1;
@@ -144,6 +280,9 @@
       <div class="top"><span class="code">Κωδ. ${id}</span><span class="badge q${q}">Θέμα ${q}ο</span></div>
       ${opts && opts.where ? `<div class="where">${esc(subjLabel(s))}</div>` : ''}
       <div class="meta">${matNames.length ? matNames.map(esc).join(' • ') : 'Χωρίς ένδειξη ενότητας'}</div>
+      ${it[3] ? `<div class="kws">🏷️ ${opts && opts.kwHtml ? opts.kwHtml : esc(it[3])}</div>` : ''}
+      ${opts && opts.matHit ? `<div class="why">βρέθηκε στην ενότητα</div>` : ''}
+      ${opts && opts.why && opts.why.length ? `<div class="why">σχετικό με: ${opts.why.map(esc).join(', ')}</div>` : ''}
       <div class="actions">
         <button class="btn" data-act="view" data-t="1">📄 Εκφώνηση</button>
         <button class="btn sol" data-act="view" data-t="2">💡 Λύση</button>
@@ -178,7 +317,7 @@
   function viewHome() {
     const subs = SUBJ.filter(s => s.school === state.school && s.cls === state.cls);
     return `
-    <div class="hero"><b>${esc(BRAND.appTitle || 'Τράπεζα Θεμάτων')}</b>${esc(BRAND.appSubtitle || 'Μαθηματικά Λυκείου · ΓΕΛ & ΕΠΑΛ')}</div>
+    <div class="hero"><b>${esc(BRAND.appTitle || 'Τράπεζα Θεμάτων')}</b>${esc(BRAND.appSubtitle || 'Μαθηματικά · Φυσική · Χημεία · Βιολογία')}</div>
     <div class="card">
       <h2>🔎 Αναζήτηση με κωδικό</h2>
       <form class="code-search" id="codeForm">
@@ -215,12 +354,13 @@
   }
 
   function openSubject(idx) {
-    go('subject', { sIdx: idx, sel: new Set(), upTo: false, q: 'all', shown: PAGE, random: null });
+    go('subject', { sIdx: idx, sel: new Set(), upTo: false, q: 'all', shown: PAGE, random: null, kw: { mode: state.kw.mode || 'exact', q: '' } });
     refreshSubject(SUBJ[idx]);
   }
 
   function viewSubject() {
     const s = SUBJ[state.sIdx];
+    if (state.kw.active) state.kw.res = runSearch(s, state.kw.q, state.kw.mode);
     const list = filtered(s);
     const counts = s.mats.map((_, i) => s.items.filter(it => it[2].includes(i)).length);
     const qs = [...new Set(s.items.map(it => it[1]))].sort();
@@ -238,7 +378,9 @@
       <div class="mats">${s.mats.map((m, i) => `<label class="mat"><input type="checkbox" data-m="${i}" ${state.sel.has(i) ? 'checked' : ''}><span>${esc(m)}</span><small>${counts[i]}</small></label>`).join('')}</div>
       <label class="switch"><input type="checkbox" id="upTo" ${state.upTo ? 'checked' : ''}><span>Μόνο θέματα <b>μέχρι την τελευταία επιλεγμένη ενότητα</b></span></label>
     </div>
-    <div class="sum">
+    ${kwCard(s)}
+    <div id="kwRes">${kwResults(s)}</div>
+    ${state.kw.active ? '' : `<div class="sum">
       <span>Βρέθηκαν <b>${list.length}</b> θέματα</span>
       <span class="row">
         <button class="btn orange" id="randBtn" ${list.length ? '' : 'disabled'}>🎲 Τυχαίο θέμα</button>
@@ -247,7 +389,7 @@
     </div>
     <div id="randBox">${state.random ? `<div class="note" style="margin:0 0 6px">🎲 Τυχαίο θέμα:</div>${itemCard(s, state.random)}<hr style="border:0;border-top:1px solid var(--line);margin:4px 0 14px">` : ''}</div>
     <div id="list">${items.map(it => itemCard(s, it)).join('') || '<div class="empty">Δεν βρέθηκαν θέματα με αυτά τα φίλτρα.</div>'}</div>
-    ${list.length > state.shown ? `<button class="btn alt" id="more" style="width:100%">Εμφάνιση περισσότερων (${list.length - state.shown})</button>` : ''}`;
+    ${list.length > state.shown ? `<button class="btn alt" id="more" style="width:100%">Εμφάνιση περισσότερων (${list.length - state.shown})</button>` : ''}`}`;
   }
   function bindSubject() {
     const s = SUBJ[state.sIdx];
@@ -257,11 +399,12 @@
     document.getElementById('selNone').onclick = () => { state.sel = new Set(); state.random = null; renderKeepScroll(); };
     document.getElementById('upTo').onchange = e => { state.upTo = e.target.checked; state.shown = PAGE; renderKeepScroll(); };
     const more = document.getElementById('more'); if (more) more.onclick = () => { state.shown += PAGE; renderKeepScroll(); };
-    document.getElementById('randBtn').onclick = () => {
+    bindKw();
+    const rb = document.getElementById('randBtn'); if (rb) rb.onclick = () => {
       const list = filtered(s); state.random = list[Math.floor(Math.random() * list.length)];
       renderKeepScroll(); document.getElementById('randBox').scrollIntoView({ behavior: 'smooth', block: 'start' });
     };
-    document.getElementById('addAll').onclick = () => {
+    const aa = document.getElementById('addAll'); if (aa) aa.onclick = () => {
       let n = 0;
       filtered(s).forEach(it => { if (!inCart(it[0])) { state.cart.push(cartEntry(s, it)); n++; } });
       saveCart(); renderKeepScroll(); toast(n ? `Προστέθηκαν ${n} θέματα στη λίστα` : 'Είναι ήδη όλα στη λίστα');
@@ -413,6 +556,7 @@
       c.style.width = Math.floor(vp.width / dpr) + 'px'; c.style.height = Math.floor(vp.height / dpr) + 'px';
       await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
     }
+    if (my === V.token && !$vb.querySelector('.vsrc')) { const n = document.createElement('div'); n.className = 'vsrc'; n.textContent = SOURCE_NOTE; $vb.appendChild(n); }
   }
   function setZoom(z) {
     const old = V.zoom; V.zoom = Math.max(1, Math.min(3, z)); if (V.zoom === old || !V.doc) return;
@@ -480,8 +624,18 @@
       msg.textContent = 'Σελιδοποίηση…';
       const N = pages.length, M = 28;
       const cPri = hex(COLORS.primary), cAcc = hex(COLORS.accent), cSil = hex(COLORS.silver), cTxt = hex(COLORS.text);
+      function wrap(text, f, size, maxW) {
+        const words = text.split(' '); const lines = []; let cur = '';
+        for (const wd of words) { const t = cur ? cur + ' ' + wd : wd; if (f.widthOfTextAtSize(t, size) <= maxW || !cur) cur = t; else { lines.push(cur); cur = wd; } }
+        if (cur) lines.push(cur); return lines;
+      }
       pages.forEach((pg, i) => {
-        const { w, h } = pg; const HB = 50, FB = 34;
+        const { w, h } = pg; const HB = 50;
+        const pn = `Σελίδα ${i + 1} από ${N}`;
+        const pnw = font.widthOfTextAtSize(pn, 8);
+        const noteW = w - 2 * M - pnw - 16; let ns = 6.6, nl = wrap(SOURCE_NOTE, font, ns, noteW);
+        while (nl.length > 3 && ns > 5) { ns -= 0.3; nl = wrap(SOURCE_NOTE, font, ns, noteW); }
+        const lh = ns * 1.3; const FB = 20 + nl.length * lh;
         const p = out.addPage([w, h]);
         const s = Math.min(1, (h - HB - FB) / h);
         const dw = w * s, dh = h * s;
@@ -505,11 +659,8 @@
         p.drawLine({ start: { x: M, y: h - HB + 6 }, end: { x: w - M, y: h - HB + 6 }, thickness: 1.2, color: cAcc });
         // footer
         p.drawLine({ start: { x: M, y: FB - 6 }, end: { x: w - M, y: FB - 6 }, thickness: 0.6, color: cSil });
-        const pn = `Σελίδα ${i + 1} από ${N}`;
-        const pnw = font.widthOfTextAtSize(pn, 8);
         p.drawText(pn, { x: w - M - pnw, y: FB - 18, size: 8, font, color: cTxt });
-        const ns = fitText(font, SOURCE_NOTE, 7, w - 2 * M - pnw - 14);
-        p.drawText(SOURCE_NOTE, { x: M, y: FB - 18, size: ns, font, color: cTxt });
+        nl.forEach((ln, k) => p.drawText(ln, { x: M, y: FB - 16 - k * lh, size: ns, font, color: cTxt }));
       });
 
       const bytes = await out.save();
